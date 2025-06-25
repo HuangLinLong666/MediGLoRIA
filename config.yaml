@@ -1,0 +1,43 @@
+data:
+  train_files: ["/Users/vegeta/s2_full_figures_oa_nonroco_combined_medical_top4_public.jsonl"]
+  image_root: "/Users/vegeta/release/figures"
+  use_refs: true
+  caption_fields: ["s2_caption", "s2orc_caption"]
+  image_ext: "png"
+  ensure_unique: true
+  return_class_labels: false
+  val_split: 0.1
+  test_split: 0.0
+  seed: 42
+
+train:
+  batch_size: 16
+  max_epochs: 10
+  lr: 1e-4
+  do_matching: true           # 是否启用 image-text 对比学习
+  match_weight: 0.5           # 对比损失权重
+  match_temperature: 0.07     # 对比损失温度
+  max_seq_length: 256         # decoder 最大序列长度（含 BOS/EOS）
+  class_weight: 1.0           # （可选）多任务分类权重
+
+model:
+  text:
+    bert_type: "allenai/scibert_scivocab_uncased"  # BERT 类型，用于 BertEncoder
+    last_n_layers: 1
+    aggregate_method: "mean"
+    norm: true
+    embedding_dim: 768         # BERT embedding 维度，应与 ImageEncoder output_dim 对齐
+    freeze_bert: true
+    agg_tokens: false
+  vision:
+    model_name: "resnet_50"     # cnn_backbones 支持的名称
+    pretrained: true
+    freeze_cnn: false
+    # 若你希望 ImageEncoder 输出通道与 embedding_dim 对齐，应在 cnn_backbones 中保证 projection
+    # 或在 ImageEncoder 中设置 output_dim = cfg.model.text.embedding_dim
+    # num_targets:  # 如果做分类任务，可在 MatchingDataModule 中返回 class_labels，并在 LightningModule 中定义 classifier
+  decoder:
+    num_layers: 6
+    num_heads: 8
+    ff_size: 2048
+    dropout: 0.1
