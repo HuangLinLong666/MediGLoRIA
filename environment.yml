@@ -1,4 +1,4 @@
-name: jinlong_env
+name: pytorch_env
 channels:
   - pytorch
   - nvidia
