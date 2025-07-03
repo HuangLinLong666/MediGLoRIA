@@ -102,7 +102,7 @@ class CaptionDecoder(nn.Module):
     def forward(self,
                 decoder_input_ids: torch.LongTensor,
                 decoder_attention_mask: torch.LongTensor,
-                image_loacal_feat: torch.Tensor) -> torch.Tensor:
+                image_local_feat: torch.Tensor) -> torch.Tensor:
         """
                 前向计算 logits。
 
@@ -118,13 +118,18 @@ class CaptionDecoder(nn.Module):
         B, L = decoder_input_ids.size()
         device = decoder_input_ids.device
 
+        assert decoder_input_ids.min() >= 0, \
+            f"Negative token ID found: min={decoder_input_ids.min().item()}"
+        assert decoder_input_ids.max() < self.vocab_size, \
+            f"Token ID too large: max={decoder_input_ids.max().item()}, vocab_size={self.vocab_size}"
+
         # Embedding + PositionalEncoding
         emb = self.embedding(decoder_input_ids) * math.sqrt(self.hidden_size)  # [B, L, H]
         emb = self.pos_encoding(emb)  # [B, L, H]
         tgt = emb # batch_first=True, 直接[B, L, hidden_size]
 
         # 处理 image_local_feat
-        mem = image_loacal_feat
+        mem = image_local_feat
 
         if mem.dim() == 4:
             # Flatten: [B, hidden_size, H, W] -> [B, N, hidden_size]
