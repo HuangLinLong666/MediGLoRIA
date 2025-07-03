@@ -43,7 +43,11 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         # 配置
         self.cfg = cfg
         # 初始化 BertEncoder、ImageEncoder
-        self.bert_encoder = BertEncoder(cfg)  # 需确保输出 embedding_dim 与 image output_dim 对齐
+        self.do_matching = getattr(cfg.train, 'do_matching', False)
+        if self.do_matching:
+            self.bert_encoder = BertEncoder(cfg)
+        else:
+            self.bert_encoder = None  # 需确保输出 embedding_dim 与 image output_dim 对齐
         self.image_encoder = ImageEncoder(cfg)  # 其 local_embedder 输出通道数应与 cfg.model.text.embedding_dim 对齐
         # Tokenizer
         self.tokenizer = self.bert_encoder.tokenizer
@@ -95,12 +99,14 @@ class ImageCaptioningLightningModule(pl.LightningModule):
 
         # 损失与对比学习配置
         self.loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-        self.do_matching = getattr(cfg.train, 'do_matching', False)
         if self.do_matching:
             # 检查维度对齐
             # image_encoder output_dim 应等于 embedding_dim
-            self.match_weight = cfg.train.match_weight
-            self.match_temp = cfg.train.match_temperature
+            with torch.no_grad():
+                bert_emb = self.bert_encoder.model.embeddings.word_embeddings.weight
+                self.decoder.embedding.weight.copy_(bert_emb)
+                self.match_weight = cfg.train.match_weight
+                self.match_temp = cfg.train.match_temperature
 
         # 学习率
         self.lr = cfg.train.lr
@@ -115,22 +121,32 @@ class ImageCaptioningLightningModule(pl.LightningModule):
                     global_emb: [B, D]，用于可选对比学习
         """
         # 提取 image 特征
-        try:
-            # 支持 get_local=True
-            global_emb, local_emb = self.image_encoder(images, get_local=True)
-            # local_emb: [B, embedding_dim, H', W']
-            B, C, Hf, Wf = local_emb.shape
-            assert C == self.decoder.image_feat_dim
-            image_feats = local_emb  # 传给 decoder，会在内部 flatten
-        except TypeError:
-            # 不支持 get_local
-            global_emb = self.image_encoder(images)  # [B, embedding_dim]
-            # 视作单位置 memory
-            image_feats = global_emb.unsqueeze(1)  # [B, 1, embedding_dim]
+        # 支持 get_local=True
+        global_emb_local, local_emb = self.image_encoder(images, get_local=True)
+        # local_emb: [B, embedding_dim, H', W']
+        B, C, Hf, Wf = local_emb.shape
+        assert C == self.decoder.image_feat_dim
+        image_feats = local_emb  # 传给 decoder，会在内部 flatten
+
+        global_emb_full = self.image_encoder(images)
+        _ = (global_emb_full * 0).sum()
+
+        # 不支持 get_local
+        global_emb = global_emb_local  # [B, embedding_dim]
 
         # 调用 decoder
         logits = self.decoder(decoder_input_ids, decoder_attention_mask, image_feats)
         return logits, global_emb
+
+    def on_after_backward(self) -> None:
+        # 在反向之后，检查哪些参数没有梯度
+        unused = []
+        for name, param in self.named_parameters():
+            if param.requires_grad and param.grad is None:
+                unused.append(name)
+        if unused:
+            print(f"[Warning] The following parameters were unused in this step:\n" +
+                  "\n".join(f"  - {n}" for n in unused))
 
     def training_step(self, batch, batch_idx):
         """
@@ -144,10 +160,15 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         decoder_attention_mask = batch['decoder_attention_mask']
         labels = batch['labels']
 
-        logits, global_emb = self(images, decoder_input_ids, decoder_attention_mask)
         # logits: [B, L, V], labels: [B, L]
+        logits, global_emb = self(images, decoder_input_ids, decoder_attention_mask)
         loss_gen = self.loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
-        loss = loss_gen
+
+        # 再跑一次全局分支，激活 layer4 + global_embedder 参数
+        global_emb_full = self.image_encoder(images)
+        dummy_loss = global_emb_full.sum() - global_emb_full.sum()
+
+        loss = loss_gen + dummy_loss
         self.log("train/loss_gen", loss_gen, prog_bar=True, on_step=True, on_epoch=True)
 
         # 可选对比学习损失
