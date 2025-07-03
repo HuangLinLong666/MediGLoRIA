@@ -6,6 +6,7 @@ import textwrap
 import time
 from pathlib import Path
 from typing import List, Dict, Union, Optional
+import torch
 
 import matplotlib
 from PIL import Image
@@ -341,6 +342,13 @@ class MatchingDataset(Dataset):
         decoder_input_ids = torch.tensor(decoder_input_ids, dtype=torch.long)
         decoder_labels = torch.tensor(decoder_labels, dtype=torch.long)
 
+        # 保证所有 id 落在 [0, vocab_size-1] 范围
+        max_id = self.tokenizer.vocab_size - 1
+        # 超出部分变成 max_id，即最后一个 token
+        decoder_input_ids = decoder_input_ids.clamp(min=0, max=max_id)
+        decoder_labels = decoder_labels.clamp(min=0, max=max_id)
+
+
         sample: Dict = {
             'image': image,
             'decoder_input_ids': decoder_input_ids,
@@ -372,4 +380,3 @@ class MatchingDataset(Dataset):
             sample['class_labels'] = torch.tensor(label_vector, dtype=torch.float)
 
         return sample
-
