@@ -13,7 +13,7 @@ def main():
 
     # 1) 构建 DataModule，仅做 test_split
     dm = MatchingDataModule(
-        annotation_files={"test": cfg.data.test_files},
+        annotation_files={"train": cfg.data.train_files, "test": cfg.data.test_files},
         image_root=cfg.data.image_root,
         scibert_path=cfg.model.text.bert_type,
         batch_size=cfg.train.batch_size,
