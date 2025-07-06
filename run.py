@@ -12,7 +12,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train Image Captioning with Lightning")
     parser.add_argument(
         "--config", type=str,
-        default="/Users/vegeta/PycharmProjects/MediGloria/config.yaml",
+        default="/Users/vegeta/PycharmProjects/MediGloRIA/config.yaml",
         help="Path to YAML config file, e.g. config.yaml"
     )
     parser.add_argument(
