@@ -71,6 +71,11 @@ dependencies:
   - python-dateutil=2.9.0
   - pytz=2025.2
 
+  # Evaluate
+  - rouge_score=0.1.2
+  - pycocoevalcap=1.2
+  - pycocotools=2.0.10
+
   # Additional
   - segmentation-models-pytorch=0.5.0
 
