@@ -8,7 +8,7 @@ from Decoder.LightningModule import ImageCaptioningLightningModule
 
 
 def main():
-    cfg = OmegaConf.load("config/config.yaml")
+    cfg = OmegaConf.load("config.yaml")
     seed_everything(cfg.data.seed)
 
     # 1) 构建 DataModule，仅做 test_split
