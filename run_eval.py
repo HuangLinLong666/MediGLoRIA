@@ -27,6 +27,7 @@ def main():
         seed=cfg.data.seed
     )
     dm.prepare_data()
+    dm.setup(stage="test")
     test_loader = dm.test_dataloader()
 
     # 2) 加载模型
