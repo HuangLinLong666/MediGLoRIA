@@ -39,6 +39,7 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         super().__init__()
         # 保存超参数
         self.val_outputs = None
+        self.test_output = [] # 存储测试输出
         self.save_hyperparameters(ignore=['bert_encoder', 'image_encoder', 'decoder'])
         # 配置
         self.cfg = cfg
@@ -283,9 +284,12 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         captions = self.generate_captions(images)
         result['predictions'] = captions
 
-        return captions
+        # 保存结果用于epoch处理
+        self.test_output.append(result)
 
-    def test_epoch_end(self, outputs):
+        return captions, result
+
+    def on_test_epoch_end(self):
         """
         测试集所有 batch 完成后调用。outputs 是 list of dicts，为每个 batch 返回的 test_step 结果。
         常见操作：汇总生成结果、将结果保存到文件、打印部分示例、计算整体指标等。
@@ -293,12 +297,17 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         # 汇总所有生成结果
         all_preds = []
         all_loss = []
-        for out in outputs:
+        avg_loss = None
+        for out in self.test_output:
             # out['predictions'] 是当前 batch 的 list of str
             if 'predictions' in out:
                 all_preds.extend(out['predictions'])
             if 'loss_gen' in out:
-                all_loss.append(out['loss_gen'].cpu().item())
+                if isinstance(out['loss_gen'], torch.Tensor):
+                    all_loss.append(out['loss_gen'].item())  # 直接取 item() 避免 .cpu()
+                else:
+                    all_loss.append(out['loss_gen'])
+
         num_show = min(5, len(all_preds))
         print(f"=== Test Epoch End: 显示前 {num_show} 条生成示例 ===")
         for i in range(num_show):
@@ -306,9 +315,14 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         if all_loss:
             avg_loss = sum(all_loss) / len(all_loss)
             print(f"Test average loss_gen: {avg_loss:.4f}")
+        else:
+            all_loss = None
+
+        # 清空测试输出
+        self.test_output = []
         return {
             "test_predictions": all_preds,
-            "test_loss": avg_loss if all_loss else None
+            "test_loss": avg_loss
         }
 
     @torch.no_grad()
@@ -340,6 +354,10 @@ class ImageCaptioningLightningModule(pl.LightningModule):
             img_feat = image_local[i:i + 1]  # [1, embedding_dim, H', W'] 或 [1, 1, embedding_dim]
             # 如果是 global only case ([1,1,embedding_dim])，需要转为适配: 传入 [1, embedding_dim, 1, 1]?
             # 这里假设总是有 local_emb 情形
-            cap = self.decoder.generate_greedy(img_feat, max_len, self.tokenizer, self.image_encoder, device)
+            cap = self.decoder.generate_greedy(img_feat,
+                                               max_len,
+                                               self.tokenizer,
+                                               self.image_encoder,
+                                               device)
             captions.append(cap)
         return captions
