@@ -30,9 +30,9 @@ class ImageCaptioningLightningModule(pl.LightningModule):
           cfg.train.do_matching: bool, 是否做对比学习
           cfg.train.match_weight: float, 对比学习损失权重
           cfg.train.match_temperature: float, 对比学习温度
-          cfg.train.max_seq_length: int, decoder 最大序列长度
+          cfg.train.max_seq_length: int, Decoder 最大序列长度
           cfg.model.text.embedding_dim: int, BERT embedding 维度，应等于 image encoder output_dim
-          cfg.model.decoder.num_layers, num_heads, ff_size, dropout (可选，如无可使用默认)
+          cfg.model.Decoder.num_layers, num_heads, ff_size, dropout (可选，如无可使用默认)
     """
 
     def __init__(self, cfg):
@@ -40,7 +40,7 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         # 保存超参数
         self.val_outputs = None
         self.test_output = [] # 存储测试输出
-        self.save_hyperparameters(ignore=['bert_encoder', 'image_encoder', 'decoder'])
+        self.save_hyperparameters(ignore=['bert_encoder', 'image_encoder', 'Decoder'])
         # 配置
         self.cfg = cfg
         # 初始化 BertEncoder、ImageEncoder
@@ -62,7 +62,7 @@ class ImageCaptioningLightningModule(pl.LightningModule):
             self.tokenizer.eos_token_id = self.tokenizer.sep_token_id
         # 初始化 CaptionDecoder，hidden_size 与 embedding_dim 对齐
         embedding_dim = cfg.model.text.embedding_dim
-        # decoder 超参数，可从 cfg 读取或使用默认
+        # Decoder 超参数，可从 cfg 读取或使用默认
         num_layers = getattr(cfg.model.decoder, 'num_layers', 6)
         num_heads = getattr(cfg.model.decoder, 'num_heads', 8)
         ff_size = getattr(cfg.model.decoder, 'ff_size', embedding_dim * 4)
@@ -83,7 +83,7 @@ class ImageCaptioningLightningModule(pl.LightningModule):
             max_position_embeddings=max_pos
         )
 
-        # 复用 BERT embedding 权重给 decoder.embedding
+        # 复用 BERT embedding 权重给 Decoder.embedding
         with torch.no_grad():
             try:
                 bert_word_emb = self.bert_encoder.model.embeddings.word_embeddings.weight  # [vocab_size, dim]
@@ -96,7 +96,7 @@ class ImageCaptioningLightningModule(pl.LightningModule):
                     # 仅 copy 前 max_len
                     self.decoder.pos_encoding.pe[:, :max_len, :].copy_(pe[:max_len, :])
             except Exception as e:
-                print(f"Warning: failed to copy BERT embeddings to decoder: {e}")
+                print(f"Warning: failed to copy BERT embeddings to Decoder: {e}")
 
         # 损失与对比学习配置
         self.loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
@@ -127,7 +127,7 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         # local_emb: [B, embedding_dim, H', W']
         B, C, Hf, Wf = local_emb.shape
         assert C == self.decoder.image_feat_dim
-        image_feats = local_emb  # 传给 decoder，会在内部 flatten
+        image_feats = local_emb  # 传给 Decoder，会在内部 flatten
 
         global_emb_full = self.image_encoder(images)
         _ = (global_emb_full * 0).sum()
@@ -135,7 +135,7 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         # 不支持 get_local
         global_emb = global_emb_local  # [B, embedding_dim]
 
-        # 调用 decoder
+        # 调用 Decoder
         logits = self.decoder(decoder_input_ids, decoder_attention_mask, image_feats)
         return logits, global_emb
 
@@ -343,7 +343,7 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         try:
             global_emb, local_emb = self.image_encoder(images, get_local=True)
             # local_emb: [B, embedding_dim, H', W']
-            image_local = local_emb  # 传给 decoder.generate_greedy
+            image_local = local_emb  # 传给 Decoder.generate_greedy
         except TypeError:
             global_emb = self.image_encoder(images)
             # single global: 视作 [B, 1, embedding_dim]
@@ -354,10 +354,13 @@ class ImageCaptioningLightningModule(pl.LightningModule):
             img_feat = image_local[i:i + 1]  # [1, embedding_dim, H', W'] 或 [1, 1, embedding_dim]
             # 如果是 global only case ([1,1,embedding_dim])，需要转为适配: 传入 [1, embedding_dim, 1, 1]?
             # 这里假设总是有 local_emb 情形
-            cap = self.decoder.generate_greedy(img_feat,
-                                               max_len,
-                                               self.tokenizer,
-                                               self.image_encoder,
-                                               device)
+            cap = self.decoder.generate_beam(img_feat,
+                                             max_len,
+                                             self.tokenizer,
+                                             self.image_encoder,
+                                             device = self.device,
+                                             beam_width=5,
+                                             length_penalty=1.2,
+                                             no_repeat_ngram_size=2)
             captions.append(cap)
         return captions
