@@ -9,18 +9,16 @@ from pycocoevalcap.meteor.meteor import Meteor
 
 
 class EvaluateCaption:
-    """
-    封装通用指标计算和医学领域完整评估流程的类。
-
-    Methods
-    -------
-    compute_generic_metrics(pred_captions, ref_captions)
-        计算 BLEU‑1/4, ROUGE‑1/2/L, METEOR。
-
-    evaluate_medical_captioning_model(model, eval_loader, modality_labels,
-                                      medical_dict_path=None, expert_feedback_path=None)
-        运行生成、通用指标、医学术语评估、错误分析、模态对比与专家反馈，保存报告和可视化。
-    """
+    def __init__(self, medical_dict_path: str = None, expert_feedback_path: str = None):
+        """
+        :param medical_dict_path: 医学术语词典 JSON 文件路径
+        :param expert_feedback_path: 专家反馈 JSON 文件路径
+        """
+        self.medical_dict_path = medical_dict_path
+        self.expert_feedback = expert_feedback_path
+        if expert_feedback_path:
+            with open(expert_feedback_path, 'r', encoding='utf-8') as f:
+                self.expert_feedback = json.load(f)
 
     @staticmethod
     def compute_generic_metrics(pred_captions, ref_captions):
@@ -41,23 +39,7 @@ class EvaluateCaption:
         results['rouge-1'] = float(np.mean(rouge1))
         results['rouge-2'] = float(np.mean(rouge2))
         results['rouge-L'] = float(np.mean(rougeL))
-        # METEOR
-        coco_ref = {'images': [], 'annotations': []}
-        coco_pred = {'images': [], 'annotations': []}
-        for i, refs in enumerate(ref_captions):
-            coco_ref['images'].append({'id': i})
-            for j, r in enumerate(refs):
-                coco_ref['annotations'].append({
-                    'image_id': i, 'id': i * 100 + j, 'caption': r
-                })
-        for i, p in enumerate(pred_captions):
-            coco_pred['images'].append({'id': i})
-            coco_pred['annotations'].append({
-                'image_id': i, 'id': i, 'caption': p
-            })
-        meteor = Meteor()
-        meteor_score, _ = meteor.compute_score(coco_ref, coco_pred)
-        results['meteor'] = float(meteor_score)
+
         return results
 
     def evaluate_medical_captioning_model(
@@ -65,14 +47,27 @@ class EvaluateCaption:
             medical_dict_path=None, expert_feedback_path=None
     ):
         # 1. 生成预测与收集参考
+        tokenizer = model.tokenizer
         pred_captions, ref_captions = [], []
         with torch.no_grad():
             for batch in tqdm(eval_loader, desc="Generating captions"):
                 # 假设 batch 包含 'images' 和 'raw_captions'
                 imgs = batch['images']
                 preds = model.generate_captions(imgs)
+                print(f"Generated caption for batch: {preds}")
                 pred_captions.extend(preds)
-                ref_captions.extend(batch['raw_captions'])
+
+                # 解码参考: 优先用 'decoder_labels'，否则 fall back 到 'labels'
+                labels_ids = batch.get('decoder_labels', batch.get('labels'))
+                for seq in labels_ids:
+                    # 把 -100（或任何 <0 的 id）全都过滤掉
+                    filtered = [tok for tok in seq.cpu().tolist() if tok >= 0]
+                    text = tokenizer.decode(
+                        filtered,
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=True
+                    ).strip()
+                    ref_captions.append([text])
         # 2. 通用指标
         generic_metrics = self.compute_generic_metrics(pred_captions, ref_captions)
         # 3. 医学术语评估
@@ -88,7 +83,7 @@ class EvaluateCaption:
             from manual_eval import manual_evaluation
             manual = manual_evaluation(
                 pred_captions, ref_captions, modality_labels,
-                expert_feedback=expert_feedback_path and json.load(open(expert_feedback_path))
+                expert_feedback=expert_feedback_path and json.load(open(expert_feedback_path, 'r', encoding='utf-8'))
             )
             modality_cmp = manual.get('modality_performance', {})
             expert_fb = manual.get('expert_feedback', {})
