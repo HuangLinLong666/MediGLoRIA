@@ -16,6 +16,5 @@ source activate pytorch_env
 
 export CUDA_LAUNCH_BLOCKING=1
 
-python ./run.py
-
-python ./run_eval.py
+python ./run.py \
+        --cv 5
