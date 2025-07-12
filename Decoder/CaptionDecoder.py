@@ -1,7 +1,9 @@
 import math
+import re
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class PositionalEncoding(nn.Module):
@@ -32,7 +34,7 @@ class PositionalEncoding(nn.Module):
 
 class CaptionDecoder(nn.Module):
     """
-    image_local_features 投影后形状为 [B, hidden_size, H, W]，其中 hidden_size 与 decoder hidden size 一致。
+    image_local_features 投影后形状为 [B, hidden_size, H, W]，其中 hidden_size 与 Decoder hidden size 一致。
     decoder_input_ids: [B, L]，以 BOS 开头、pad 部分为 pad_token_id。
     decoder_attention_mask: [B, L]，1 表示有效 token，0 表示 pad。
     在 collate stage，decoder_labels pad 为 -100，用于 loss 计算
@@ -47,7 +49,7 @@ class CaptionDecoder(nn.Module):
                  num_layers: int = 6,
                  num_heads: int = 8,
                  ff_size: int = 2048,
-                 dropout: float = 0.1,
+                 dropout: float = 0.2,
                  max_position_embeddings: int = 512
                  ):
 
@@ -62,7 +64,7 @@ class CaptionDecoder(nn.Module):
         num_heads: multi-head attention 头数
         ff_size: feed-forward 隐藏层大小
         dropout: dropout 比例
-        max_position_embeddings: 位置编码最大长度，应 >= 数据集中最大 decoder length
+        max_position_embeddings: 位置编码最大长度，应 >= 数据集中最大 Decoder length
         """
         super().__init__()
         self.hidden_size = hidden_size
@@ -177,12 +179,14 @@ class CaptionDecoder(nn.Module):
         return logits
 
     @torch.no_grad()
-    def generate_greedy(self,
-                        image_local_raw: torch.Tensor,
-                        max_len: int,
-                        tokenizer,
-                        image_encoder,
-                        device: torch.device = None) -> str:
+    def generate_beam(self,
+                      image_local_raw: torch.Tensor,
+                      max_len: int,
+                      tokenizer,
+                      image_encoder,
+                      device: torch.device = None,
+                      beam_width: int = 5,
+                      length_penalty: float = 1.0) -> str:
         """
                 Greedy 解码生成单张图像的 caption。
 
@@ -209,15 +213,14 @@ class CaptionDecoder(nn.Module):
                 pass  # skip local_embedder
             else:
                 raise ValueError(f"Unknown image_feat channel size: {mem.shape[1]}")
-
+        elif mem.dim() != 3:
+            raise ValueError(f"image_local_raw should be 3 or 4, but get {mem.dim()}")
         # flatten
-        if mem.dim() == 3:
-            mem_flat = mem
-        elif mem.dim() == 4:
+        if mem.dim() == 4:
             Bf, C, H, W = mem.shape
-            mem_flat = mem.view(Bf, C, H*W).permute(0, 2, 1)  # [1, N, hidden_size]
+            mem_flat = mem.view(Bf, C, H * W).permute(0, 2, 1)
         else:
-            raise ValueError(f"image_local_raw 维度应为 3 或 4，得到 {mem.dim()}")
+            mem_flat = mem  # already [1, N, hidden_size]
 
         # 如果 image_feat_dim != hidden_size，需要投影
         if self.image_feat_dim != self.hidden_size:
@@ -225,20 +228,56 @@ class CaptionDecoder(nn.Module):
         else:
             mem_proj = mem_flat  # [1, N, hidden_size]
 
-        # 生成循环
-        generated = [tokenizer.bos_token_id]
+        # 初始化beam
+        beams = [{
+            "ids": [tokenizer.bos_token_id],
+            "score": 0.0,
+            "done": False
+        }]
         for _ in range(max_len - 1):
-            cur_ids = torch.tensor(generated, device=device).unsqueeze(0)  # [1, cur_len]
-            attn_mask = (cur_ids != tokenizer.pad_token_id).long()  # [1, cur_len]
+            all_cands = []
+            for b in beams:
+                if b["done"]:
+                    all_cands.append(b)
+                    continue
+                cur_ids = torch.tensor([b["ids"]], device=device)
+                attn_mask = (cur_ids != tokenizer.pad_token_id).long()
+                logits = self.forward(cur_ids, attn_mask, mem_proj)
+                log_probs = F.log_softmax(logits[0, -1], dim=-1)
 
-            logits = self.forward(cur_ids, attn_mask, mem_flat)
-            next_logits = logits[0, -1, :]  # [vocab_size]
-            next_id = next_logits.argmax(dim=-1).item()
-            generated.append(next_id)
-            if next_id == tokenizer.eos_token_id:
+                topk_lp, topk_ids = torch.topk(log_probs, beam_width)
+                for lp, tid in zip(topk_lp.tolist(), topk_ids.tolist()):
+                    all_cands.append({
+                        "ids": b["ids"] + [tid],
+                        "score": b["score"] + lp,
+                        "done": b["done"] or (tid == tokenizer.eos_token_id)
+                    })
+            # 排序取前K
+            beams = sorted(
+                all_cands,
+                key=lambda x: x["score"] / ((len(x["ids"])**length_penalty)),
+                reverse=True
+            )[:beam_width]
+
+            if all(b["done"] for b in beams):
                 break
-        # decoder, 跳过特殊token
-        text = tokenizer.decode(generated, skip_special_tokens=True)
+
+        # 选最优 completed
+        completed = [b for b in beams if b["done"]] or beams
+        best = max(
+            completed,
+            key=lambda x: x["score"] / (len(x["ids"]) ** length_penalty)
+        )
+        text = tokenizer.decode(
+            best["ids"],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True
+        ).strip()
+
+        # 后处理同上
+        text = re.sub(r'[^\x00-\x7F]+', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+
         return text
 
 
