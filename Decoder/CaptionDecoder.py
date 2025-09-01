@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 class PositionalEncoding(nn.Module):
     # 位置编码
-    def __init__(self, d_model: int, max_len: int=256 ):
+    def __init__(self, d_model: int, max_len: int=128 ):
         super().__init__()
 
         # 位置编码矩阵[max_len, d_model]
@@ -34,7 +34,7 @@ class PositionalEncoding(nn.Module):
 
 class CaptionDecoder(nn.Module):
     """
-    image_local_features 投影后形状为 [B, hidden_size, H, W]，其中 hidden_size 与 Decoder hidden size 一致。
+    image_local_features 投影后形状为 [B, hidden_size, H, W]，其中 hidden_size 与 decoder hidden size 一致。
     decoder_input_ids: [B, L]，以 BOS 开头、pad 部分为 pad_token_id。
     decoder_attention_mask: [B, L]，1 表示有效 token，0 表示 pad。
     在 collate stage，decoder_labels pad 为 -100，用于 loss 计算
@@ -64,7 +64,7 @@ class CaptionDecoder(nn.Module):
         num_heads: multi-head attention 头数
         ff_size: feed-forward 隐藏层大小
         dropout: dropout 比例
-        max_position_embeddings: 位置编码最大长度，应 >= 数据集中最大 Decoder length
+        max_position_embeddings: 位置编码最大长度，应 >= 数据集中最大 decoder length
         """
         super().__init__()
         self.hidden_size = hidden_size
@@ -185,8 +185,9 @@ class CaptionDecoder(nn.Module):
                       tokenizer,
                       image_encoder,
                       device: torch.device = None,
-                      beam_width: int = 5,
-                      length_penalty: float = 1.0) -> str:
+                      beam_width: int = 3,
+                      length_penalty: float = 1.0, 
+                      no_repeat_ngram_size = None) -> str:
         """
                 Greedy 解码生成单张图像的 caption。
 
