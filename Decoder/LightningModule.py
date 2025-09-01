@@ -84,7 +84,7 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         # dummy to touch visual encoder
         dummy = self.image_encoder(images).sum() * 0
         loss = loss + dummy
-        self.log("train/loss_gen", loss, prog_bar=True, on_step=True, on_epoch=True)
+        self.log("train_loss_gen", loss, prog_bar=True, on_step=True, on_epoch=True)
         # matching loss if needed
         if self.do_matching:
             txt_ids  = batch.get('match_input_ids', None)
@@ -98,6 +98,16 @@ class ImageCaptioningLightningModule(pl.LightningModule):
                 self.log("train/loss_match", lm/2, prog_bar=True, on_step=True, on_epoch=True)
         return loss
 
+    def test_step(self, batch, batch_idx):
+        images = batch['images']
+        ids = batch['decoder_input_ids']
+        mask = batch['decoder_attention_mask']
+        labels = batch['labels']
+        logits, _ = self(images, ids, mask)
+        loss = self.loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
+        self.log("test_loss_gen", loss, prog_bar=True, on_epoch=True)
+        return loss
+
     def on_validation_epoch_start(self):
         self.val_outputs = []
 
@@ -108,7 +118,7 @@ class ImageCaptioningLightningModule(pl.LightningModule):
         labels = batch['labels']
         logits, _ = self(images, ids, mask)
         loss = self.loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
-        self.log("val/loss_gen", loss, prog_bar=True, on_epoch=True)
+        self.log("val_loss_gen", loss, prog_bar=True, on_epoch=True)
         # 不再收集图像和生成示例
         return loss
 
