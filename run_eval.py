@@ -27,13 +27,13 @@ def main():
         seed=cfg.data.seed
     )
     dm.prepare_data()
-    dm.setup(stage="test")
+    dm.setup("test")
     test_loader = dm.test_dataloader()
     print(f"Test DataLoader created with {len(test_loader.dataset)} samples.")
 
     # 2) 加载模型
     model = ImageCaptioningLightningModule.load_from_checkpoint(
-        "logs/image_caption/version_0/checkpoints/best.ckpt",
+        "/gpfs/work/bio/jinlonghuang23/MediGLoRIA/checkpoints/best.ckpt",
         cfg=cfg
     ).eval().to("cuda")
     print(f"Model loaded from checkpoint: {model}")
