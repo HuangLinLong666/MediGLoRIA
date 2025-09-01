@@ -39,7 +39,7 @@ class EvaluateCaption:
         results['rouge-1'] = float(np.mean(rouge1))
         results['rouge-2'] = float(np.mean(rouge2))
         results['rouge-L'] = float(np.mean(rougeL))
-
+        
         return results
 
     def evaluate_medical_captioning_model(
