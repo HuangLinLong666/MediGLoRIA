@@ -7,10 +7,10 @@ GLoRIA仓库链接:https://github.com/marshuang80/gloria.
 
 # GetStart
 (1) Create conda environment
-```conda create --name pytorch_env python=3.10
-conda activate pytorch_env```
+    conda create --name pytorch_env python=3.10
+    conda activate pytorch_env
 
 (2) Clone Repo
-```git clone .git```
+  git clone https://github.com/HuangLinLong666/MediGLoRIA.git
 
 (3)  Install Dependencies
